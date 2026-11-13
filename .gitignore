@@ -1,0 +1,39 @@
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+.vite/
+coverage/
+npm-debug.log*
+
+# Runtime data (generated PDFs, scratch files)
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Test fixtures: keep the synthetic card, ignore any real ones dropped locally
+fixtures/private/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
