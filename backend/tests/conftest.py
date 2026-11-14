@@ -78,7 +78,7 @@ def clean_db(database_url: str) -> str:
     async def _truncate() -> None:
         conn = await asyncpg.connect(asyncpg_dsn(database_url))
         try:
-            await conn.execute("TRUNCATE uploads")
+            await conn.execute("TRUNCATE uploads CASCADE")
         finally:
             await conn.close()
 

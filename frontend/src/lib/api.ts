@@ -59,6 +59,16 @@ export const getHealth = (signal?: AbortSignal) => apiFetch<HealthResponse>('/he
 /** Mirrors backend/app/schemas/uploads.py. */
 export type HubSpotStatus = 'pending' | 'uploaded' | 'failed' | 'skipped';
 
+/** Extracted contact. null = absent or unreadable on the card. */
+export interface ContactFields {
+  extractor: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  job_title: string | null;
+}
+
 export interface UploadResponse {
   id: string;
   filename: string;
@@ -71,7 +81,12 @@ export interface UploadResponse {
     url: string | null;
     error: string | null;
   };
+  contact: ContactFields | null;
 }
+
+/** GET /api/uploads/:id — the stored upload and contact, read back from Postgres. */
+export const getUpload = (id: string, signal?: AbortSignal) =>
+  apiFetch<UploadResponse>(`/uploads/${encodeURIComponent(id)}`, { signal });
 
 /** POST /api/uploads. No Content-Type header: the browser adds the multipart boundary. */
 export function uploadPhoto(file: File, signal?: AbortSignal) {

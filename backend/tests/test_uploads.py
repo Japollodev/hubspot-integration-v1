@@ -8,27 +8,47 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.services.extraction import ExtractedContact, get_contact_extractor
 from app.services.hubspot_files import HubSpotFilesClient, get_hubspot_files
-from app.services.uploads import detect_image_type, sanitize_filename
+from app.services.uploads import ValidatedImage, detect_image_type, sanitize_filename
 from tests.conftest import ClientFactory, asyncpg_dsn
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 1020  # 1 KiB, valid JPEG signature
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
+SAMPLE_CONTACT_JSON = {
+    "extractor": "sample",
+    "first_name": "Ada",
+    "last_name": "Lovelace",
+    "email": "ada.lovelace@example.com",
+    "phone": "+1 555 0100",
+    "job_title": "Head of Engineering",
+}
+
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
-def fetch_upload(database_url: str, upload_id: str) -> dict[str, Any]:
+def _fetch_row(database_url: str, sql: str, upload_id: str) -> dict[str, Any]:
     async def _q() -> dict[str, Any]:
         conn = await asyncpg.connect(asyncpg_dsn(database_url))
         try:
-            row = await conn.fetchrow("SELECT * FROM uploads WHERE id = $1::uuid", upload_id)
+            row = await conn.fetchrow(sql, upload_id)
             assert row is not None
             return dict(row)
         finally:
             await conn.close()
 
     return asyncio.run(_q())
+
+
+def fetch_upload(database_url: str, upload_id: str) -> dict[str, Any]:
+    return _fetch_row(database_url, "SELECT * FROM uploads WHERE id = $1::uuid", upload_id)
+
+
+def fetch_extraction(database_url: str, upload_id: str) -> dict[str, Any]:
+    return _fetch_row(
+        database_url, "SELECT * FROM contact_extractions WHERE upload_id = $1::uuid", upload_id
+    )
 
 
 @pytest.fixture
@@ -75,10 +95,15 @@ def test_upload_stores_in_postgres_and_hubspot(db_client: TestClient, clean_db: 
         "error": None,
     }
 
+    assert body["contact"] == SAMPLE_CONTACT_JSON
+
     row = fetch_upload(clean_db, body["id"])
     assert row["data"] == JPEG
     assert row["hubspot_status"] == "uploaded"
     assert row["hubspot_file_id"] == "987"
+
+    extraction = fetch_extraction(clean_db, body["id"])
+    assert {k: extraction[k] for k in SAMPLE_CONTACT_JSON} == SAMPLE_CONTACT_JSON
 
     (req,) = seen
     assert req.url.path == "/files/v3/files"
@@ -117,6 +142,41 @@ def test_no_token_skips_hubspot(db_client: TestClient, clean_db: str) -> None:
     assert res.json()["hubspot"]["status"] == "skipped"
     assert res.json()["content_type"] == "image/png"
     assert fetch_upload(clean_db, res.json()["id"])["hubspot_status"] == "skipped"
+
+
+def test_get_upload_reads_back_from_postgres(db_client: TestClient) -> None:
+    created = post_file(db_client, JPEG).json()
+
+    res = db_client.get(f"/api/uploads/{created['id']}")
+
+    assert res.status_code == 200
+    assert res.json() == created
+    assert res.json()["contact"] == SAMPLE_CONTACT_JSON
+
+
+def test_get_unknown_upload_404(db_client: TestClient) -> None:
+    res = db_client.get("/api/uploads/00000000-0000-0000-0000-000000000000")
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "upload_not_found"
+
+
+def test_extractor_is_injectable_and_blanks_stay_blank(
+    db_client: TestClient, clean_db: str
+) -> None:
+    class UnreadableEmail:
+        name = "fake"
+
+        async def extract(self, image: ValidatedImage) -> ExtractedContact:
+            return ExtractedContact(first_name="Grace", last_name="Hopper", email=None)
+
+    db_client.app.dependency_overrides[get_contact_extractor] = UnreadableEmail  # type: ignore[attr-defined]
+
+    body = post_file(db_client, JPEG).json()
+
+    assert body["contact"]["extractor"] == "fake"
+    assert body["contact"]["first_name"] == "Grace"
+    assert body["contact"]["email"] is None
+    assert fetch_extraction(clean_db, body["id"])["email"] is None
 
 
 def test_content_type_comes_from_bytes_not_client(db_client: TestClient) -> None:

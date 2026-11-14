@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, uploadPhoto, type HubSpotStatus, type UploadResponse } from '../../lib/api';
 import { formatBytes } from '../../lib/format';
+import { ContactCard } from './ContactCard';
 
 /** Keep in sync with MAX_UPLOAD_MB on the server; the server check is authoritative. */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -157,6 +158,7 @@ function UploadResult({ result }: { result: UploadResponse }) {
           )}
         </dd>
       </dl>
+      {result.contact && <ContactCard contact={result.contact} />}
     </div>
   );
 }

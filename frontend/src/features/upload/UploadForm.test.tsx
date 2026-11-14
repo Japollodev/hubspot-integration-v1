@@ -11,6 +11,14 @@ const result: UploadResponse = {
   size_bytes: 12345,
   sha256: 'abc',
   hubspot: { status: 'uploaded', file_id: '987', url: null, error: null },
+  contact: {
+    extractor: 'sample',
+    first_name: 'Ada',
+    last_name: 'Lovelace',
+    email: 'ada.lovelace@example.com',
+    phone: '+1 555 0100',
+    job_title: 'Head of Engineering',
+  },
 };
 
 function mockFetch(status: number, body: unknown) {
@@ -54,6 +62,34 @@ describe('UploadForm', () => {
     expect(url).toBe('/api/uploads');
     expect(init?.method).toBe('POST');
     expect((init?.body as FormData).get('file')).toBeInstanceOf(File);
+  });
+
+  it('shows the sample contact fields after upload', async () => {
+    mockFetch(200, result);
+    render(<UploadForm />);
+    selectFile(new File(['x'], 'card.jpg', { type: 'image/jpeg' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    const contact = await screen.findByLabelText('Contact');
+    expect(contact).toHaveTextContent('Ada Lovelace');
+    expect(contact).toHaveTextContent('ada.lovelace@example.com');
+    expect(contact).toHaveTextContent('+1 555 0100');
+    expect(contact).toHaveTextContent('Head of Engineering');
+    expect(contact).toHaveTextContent('Sample data');
+  });
+
+  it('renders blank contact fields as a dash', async () => {
+    mockFetch(200, {
+      ...result,
+      contact: { ...result.contact!, extractor: 'openai', email: null },
+    });
+    render(<UploadForm />);
+    selectFile(new File(['x'], 'card.jpg', { type: 'image/jpeg' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    const contact = await screen.findByLabelText('Contact');
+    expect(screen.getByLabelText('blank')).toHaveTextContent('—');
+    expect(contact).not.toHaveTextContent('Sample data');
   });
 
   it('shows the server error message', async () => {
