@@ -3,11 +3,13 @@ import { vi } from 'vitest';
 import App from './App';
 
 function mockFetch(status: number, body: unknown) {
-  return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { 'content-type': 'application/json' },
-    }),
+  // Fresh Response per call: the upload form also fetches /api/openai/status on mount.
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
   );
 }
 

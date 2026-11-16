@@ -44,13 +44,25 @@ class Settings(BaseSettings):
     db_max_overflow: int = 5
 
     # Integrations.
-    openai_api_key: SecretStr | None = None  # Step 3
-    openai_model: str = "gpt-4o-mini"  # Step 3
+    # OpenAI (Step 3). Users bring their own key (X-OpenAI-Key header from the browser).
+    # openai_api_key is a DEV-ONLY fallback, ignored when environment == "production".
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-4o-mini"  # must support vision + structured outputs
+    openai_api_base: str = "https://api.openai.com/v1"
+    openai_timeout_s: float = 60.0
+    openai_max_image_px: int = 2048  # long-edge cap for the copy sent to OpenAI
     # HubSpot private-app token (test account). Needs the `files` scope from Step 1.
     hubspot_access_token: SecretStr | None = None
     hubspot_api_base: str = "https://api.hubapi.com"
     hubspot_files_folder: str = "/crm-importer/uploads"
     hubspot_timeout_s: float = 30.0
+
+    @property
+    def server_openai_key(self) -> str | None:
+        """The .env key, only outside production (prod must never use a developer key)."""
+        if self.environment == "production" or self.openai_api_key is None:
+            return None
+        return self.openai_api_key.get_secret_value() or None
 
     @property
     def max_upload_bytes(self) -> int:

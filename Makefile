@@ -48,6 +48,9 @@ test: ## pytest + vitest
 	cd $(BACKEND) && uv run pytest
 	cd $(FRONTEND) && npm test
 
+test-live: ## Step 3 live extraction tests against real OpenAI (needs OPENAI_API_KEY)
+	cd $(BACKEND) && uv run pytest -m live -v tests/test_extraction_live.py
+
 check: lint typecheck test ## Everything CI runs
 
 build: ## Build the frontend into frontend/dist (served by FastAPI at /)
@@ -59,4 +62,4 @@ serve: build ## Production-like: FastAPI serves the built app on :8000
 docker: ## Build and run the container on :8000
 	docker compose up --build
 
-.PHONY: help install db-up db-down migrate dev dev-api dev-web lint format typecheck test check build serve docker
+.PHONY: help install db-up db-down migrate dev dev-api dev-web lint format typecheck test test-live check build serve docker

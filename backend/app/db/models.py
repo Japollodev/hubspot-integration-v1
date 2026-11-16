@@ -3,8 +3,10 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import DateTime, Enum, LargeBinary, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, LargeBinary, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,6 +19,11 @@ class HubSpotStatus(StrEnum):
     UPLOADED = "uploaded"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class ExtractionStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
 
 
 class Upload(Base):
@@ -42,6 +49,46 @@ class Upload(Base):
     hubspot_file_id: Mapped[str | None] = mapped_column(String(64))
     hubspot_url: Mapped[str | None] = mapped_column(Text)
     hubspot_error: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ContactExtraction(Base):
+    """Contact fields read from an upload. One per upload; blank (NULL) means not readable."""
+
+    __tablename__ = "contact_extractions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    upload_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("uploads.id", ondelete="CASCADE"), unique=True
+    )
+    extractor: Mapped[str] = mapped_column(String(32))
+
+    first_name: Mapped[str | None] = mapped_column(String(255))
+    last_name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(64))
+    job_title: Mapped[str | None] = mapped_column(String(255))
+
+    status: Mapped[ExtractionStatus] = mapped_column(
+        Enum(
+            ExtractionStatus,
+            name="extraction_status",
+            native_enum=False,
+            length=16,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=ExtractionStatus.SUCCEEDED,
+        server_default=ExtractionStatus.SUCCEEDED.value,
+    )
+    model: Mapped[str | None] = mapped_column(String(64))
+    # {field_name: {"legibility", "source_text", "note"}} -- what was seen, for review.
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

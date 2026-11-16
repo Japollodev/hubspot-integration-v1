@@ -13,6 +13,8 @@ from sqlalchemy import URL, make_url
 
 from app.core.config import BACKEND_DIR, Settings
 from app.main import create_app
+from app.services.extraction import get_contact_extractor
+from app.services.extraction.sample import SampleContactExtractor
 
 ClientFactory = Callable[..., TestClient]
 
@@ -28,11 +30,21 @@ def asyncpg_dsn(url: str | URL) -> str:
 def make_client(tmp_path: Path) -> Iterator[ClientFactory]:
     with ExitStack() as stack:
 
-        def _make(**overrides: object) -> TestClient:
+        def _make(*, fake_extractor: bool = True, **overrides: object) -> TestClient:
+            """fake_extractor=True swaps OpenAI for the offline Step 2 sample extractor.
+
+            Pass False to exercise the real BYOK key resolution + OpenAI extractor wiring.
+            Tests never read OPENAI_API_KEY from the developer's .env unless they pass it.
+            """
             overrides.setdefault("frontend_dist", tmp_path / "missing-dist")
-            settings = Settings(environment="test", log_json=False, **overrides)  # type: ignore[arg-type]
-            # Entering the client runs the app lifespan (DB engine, HubSpot http client).
-            return stack.enter_context(TestClient(create_app(settings)))
+            overrides.setdefault("openai_api_key", None)
+            overrides.setdefault("environment", "test")
+            settings = Settings(log_json=False, **overrides)  # type: ignore[arg-type]
+            app = create_app(settings)
+            if fake_extractor:
+                app.dependency_overrides[get_contact_extractor] = SampleContactExtractor
+            # Entering the client runs the app lifespan (DB engine, HubSpot/OpenAI http clients).
+            return stack.enter_context(TestClient(app))
 
         yield _make
 
@@ -78,7 +90,7 @@ def clean_db(database_url: str) -> str:
     async def _truncate() -> None:
         conn = await asyncpg.connect(asyncpg_dsn(database_url))
         try:
-            await conn.execute("TRUNCATE uploads")
+            await conn.execute("TRUNCATE uploads CASCADE")
         finally:
             await conn.close()
 
