@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, uploadPhoto, type HubSpotStatus, type UploadResponse } from '../../lib/api';
+import {
+  ApiError,
+  getOpenAIStatus,
+  OPENAI_KEY_ERRORS,
+  uploadPhoto,
+  type HubSpotStatus,
+  type UploadResponse,
+} from '../../lib/api';
 import { formatBytes } from '../../lib/format';
+import { clearOpenAIKey, getOpenAIKey, maskKey } from '../../lib/openaiKey';
+import { OpenAIKeyForm } from '../openai/OpenAIKeyForm';
 import { ContactCard } from './ContactCard';
 
 /** Keep in sync with MAX_UPLOAD_MB on the server; the server check is authoritative. */
@@ -26,6 +35,32 @@ export function UploadForm() {
   const [state, setState] = useState<State>({ kind: 'idle' });
   const abortRef = useRef<AbortController | null>(null);
   const previewRef = useRef<string | null>(null);
+
+  // Bring-your-own-key: the user's key (browser storage) or, in dev, the server's fallback key.
+  const [apiKey, setApiKey] = useState<string | null>(() => getOpenAIKey());
+  const [serverKey, setServerKey] = useState(false);
+  // Set when the user must (re-)enter a key; holds the reason shown above the form.
+  const [keyPrompt, setKeyPrompt] = useState<{ message: string | null } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getOpenAIStatus(controller.signal)
+      .then((status) => setServerKey(Boolean(status.server_key_available)))
+      .catch(() => setServerKey(false));
+    return () => controller.abort();
+  }, []);
+
+  const needsKey = keyPrompt !== null || (!apiKey && !serverKey);
+
+  function onKeySaved(key: string) {
+    setApiKey(key);
+    setKeyPrompt(null);
+  }
+
+  function forgetKey() {
+    clearOpenAIKey();
+    setApiKey(null);
+  }
 
   // On unmount: cancel any in-flight upload and free the preview object URL.
   useEffect(
@@ -65,10 +100,18 @@ export function UploadForm() {
     abortRef.current = controller;
     setState({ kind: 'uploading' });
     try {
-      const result = await uploadPhoto(file, controller.signal);
+      const result = await uploadPhoto(file, controller.signal, apiKey);
       setState({ kind: 'done', result });
     } catch (err) {
       if (controller.signal.aborted) return;
+      if (err instanceof ApiError && OPENAI_KEY_ERRORS.has(err.code)) {
+        // Missing or rejected key: drop it and ask again. The selected file is kept,
+        // so the user just presses Upload after saving a key.
+        forgetKey();
+        setKeyPrompt({ message: err.message });
+        setState({ kind: 'idle' });
+        return;
+      }
       const message =
         err instanceof ApiError ? err.message : 'Upload failed. Check your connection.';
       setState({ kind: 'error', message });
@@ -79,6 +122,20 @@ export function UploadForm() {
 
   return (
     <section className="space-y-6">
+      {needsKey ? (
+        <OpenAIKeyForm
+          message={keyPrompt?.message}
+          onSaved={onKeySaved}
+          onCancel={keyPrompt && (apiKey || serverKey) ? () => setKeyPrompt(null) : undefined}
+        />
+      ) : (
+        <KeyStatus
+          apiKey={apiKey}
+          onChange={() => setKeyPrompt({ message: null })}
+          onForget={forgetKey}
+        />
+      )}
+
       <form
         onSubmit={onSubmit}
         className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
@@ -122,6 +179,44 @@ export function UploadForm() {
 
       {state.kind === 'done' && <UploadResult result={state.result} />}
     </section>
+  );
+}
+
+function KeyStatus({
+  apiKey,
+  onChange,
+  onForget,
+}: {
+  apiKey: string | null;
+  onChange: () => void;
+  onForget: () => void;
+}) {
+  return (
+    <div
+      aria-label="OpenAI key status"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-slate-100 px-4 py-2 text-xs text-slate-700"
+    >
+      {apiKey ? (
+        <>
+          <span>
+            Using your OpenAI key <code className="font-mono">{maskKey(apiKey)}</code>
+          </span>
+          <button type="button" onClick={onChange} className="text-brand underline">
+            Change
+          </button>
+          <button type="button" onClick={onForget} className="text-slate-600 underline">
+            Forget
+          </button>
+        </>
+      ) : (
+        <>
+          <span>Using the server&apos;s development OpenAI key.</span>
+          <button type="button" onClick={onChange} className="text-brand underline">
+            Use my own key
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

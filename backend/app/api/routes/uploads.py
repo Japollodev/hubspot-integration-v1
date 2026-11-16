@@ -10,10 +10,20 @@ from sqlalchemy.orm import defer
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.db.models import ContactExtraction, HubSpotStatus, Upload
+from app.db.models import ContactExtraction, ExtractionStatus, HubSpotStatus, Upload
 from app.db.session import get_session
-from app.schemas.uploads import ContactFields, HubSpotFileResult, UploadResponse
-from app.services.extraction import ContactExtractor, get_contact_extractor
+from app.schemas.uploads import (
+    ContactFields,
+    FieldEvidenceOut,
+    HubSpotFileResult,
+    UploadResponse,
+)
+from app.services.extraction import (
+    ContactExtractor,
+    ExtractionError,
+    OpenAIKeyError,
+    get_contact_extractor,
+)
 from app.services.hubspot_files import HubSpotError, HubSpotFilesClient, get_hubspot_files
 from app.services.uploads import read_and_validate
 
@@ -45,9 +55,35 @@ async def create_upload(
     session.add(upload)
     await session.commit()
 
-    # 2. Contact extraction (fixed sample in Step 2), stored against the upload.
-    fields = await extractor.extract(image)
-    extraction = ContactExtraction(upload_id=upload.id, extractor=extractor.name, **asdict(fields))
+    # 2. Contact extraction (OpenAI with the user's key), stored against the upload.
+    #    Failures are recorded on the row, not raised -- except an invalid key (raised below,
+    #    after the row is saved) because only the user can fix it.
+    key_error: OpenAIKeyError | None = None
+    try:
+        fields = await extractor.extract(image)
+    except (ExtractionError, OpenAIKeyError) as exc:
+        if isinstance(exc, OpenAIKeyError):
+            key_error = exc
+        logger.warning(
+            "Contact extraction failed",
+            extra={"upload_id": str(upload.id), "error_code": exc.code},
+        )
+        extraction = ContactExtraction(
+            upload_id=upload.id,
+            extractor=extractor.name,
+            status=ExtractionStatus.FAILED,
+            error_code=exc.code,
+            error=str(exc),
+        )
+    else:
+        extraction = ContactExtraction(
+            upload_id=upload.id,
+            extractor=extractor.name,
+            status=ExtractionStatus.SUCCEEDED,
+            model=fields.model,
+            evidence={name: asdict(ev) for name, ev in fields.evidence.items()} or None,
+            **fields.values(),
+        )
     session.add(extraction)
 
     # 3. HubSpot Files. A failure here is recorded, not raised: the upload itself succeeded.
@@ -75,8 +111,16 @@ async def create_upload(
             "size_bytes": upload.size_bytes,
             "hubspot_status": upload.hubspot_status.value,
             "extractor": extraction.extractor,
+            "extraction_status": extraction.status.value,
         },
     )
+    if key_error is not None:
+        raise AppError(
+            str(key_error),
+            code=key_error.code,
+            status_code=401,
+            details={"upload_id": str(upload.id)},
+        )
     return _to_response(upload, extraction)
 
 
@@ -115,6 +159,13 @@ def _to_response(upload: Upload, extraction: ContactExtraction | None) -> Upload
         contact=(
             ContactFields(
                 extractor=extraction.extractor,
+                status=extraction.status,
+                model=extraction.model,
+                error_code=extraction.error_code,
+                error=extraction.error,
+                evidence={
+                    name: FieldEvidenceOut(**ev) for name, ev in (extraction.evidence or {}).items()
+                },
                 first_name=extraction.first_name,
                 last_name=extraction.last_name,
                 email=extraction.email,

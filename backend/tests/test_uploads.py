@@ -5,6 +5,7 @@ from typing import Any
 
 import asyncpg  # type: ignore[import-untyped]
 import httpx
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,13 +17,21 @@ from tests.conftest import ClientFactory, asyncpg_dsn
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 1020  # 1 KiB, valid JPEG signature
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
-SAMPLE_CONTACT_JSON = {
+SAMPLE_VALUES = {
     "extractor": "sample",
     "first_name": "Ada",
     "last_name": "Lovelace",
     "email": "ada.lovelace@example.com",
     "phone": "+1 555 0100",
     "job_title": "Head of Engineering",
+}
+SAMPLE_CONTACT_JSON: dict[str, Any] = {
+    **SAMPLE_VALUES,
+    "status": "succeeded",
+    "model": None,
+    "error_code": None,
+    "error": None,
+    "evidence": {},
 }
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -68,8 +77,8 @@ def use_hubspot(client: TestClient, handler: Handler, seen: list[httpx.Request])
     client.app.dependency_overrides[get_hubspot_files] = lambda: fake  # type: ignore[attr-defined]
 
 
-def post_file(client: TestClient, data: bytes, name: str = "card.jpg") -> httpx.Response:
-    res: httpx.Response = client.post("/api/uploads", files={"file": (name, data, "image/jpeg")})
+def post_file(client: TestClient, data: bytes, name: str = "card.jpg") -> httpx2.Response:
+    res: httpx2.Response = client.post("/api/uploads", files={"file": (name, data, "image/jpeg")})
     return res
 
 
@@ -103,7 +112,8 @@ def test_upload_stores_in_postgres_and_hubspot(db_client: TestClient, clean_db: 
     assert row["hubspot_file_id"] == "987"
 
     extraction = fetch_extraction(clean_db, body["id"])
-    assert {k: extraction[k] for k in SAMPLE_CONTACT_JSON} == SAMPLE_CONTACT_JSON
+    assert {k: extraction[k] for k in SAMPLE_VALUES} == SAMPLE_VALUES
+    assert extraction["status"] == "succeeded"
 
     (req,) = seen
     assert req.url.path == "/files/v3/files"

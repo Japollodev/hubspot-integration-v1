@@ -12,6 +12,9 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "httpx>=0.28",
+    "openai>=3.51.0",
+    "pillow>=13.0.0",
+    "pillow-heif>=1.8.1",
 ]
 
 [dependency-groups]
@@ -19,6 +22,7 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "mypy>=1.13",
+    "httpx2>=2.16.0",
 ]
 
 [tool.uv]
@@ -47,7 +51,9 @@ packages = ["app", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Live tests call real OpenAI with your key; run with `make test-live`.
+addopts = "-ra -m 'not live'"
+markers = ["live: calls the real OpenAI API (needs OPENAI_API_KEY)"]
 filterwarnings = [
     "error",
     # Starlette nudges toward httpx2; httpx remains supported for TestClient.

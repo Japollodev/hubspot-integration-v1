@@ -59,9 +59,25 @@ export const getHealth = (signal?: AbortSignal) => apiFetch<HealthResponse>('/he
 /** Mirrors backend/app/schemas/uploads.py. */
 export type HubSpotStatus = 'pending' | 'uploaded' | 'failed' | 'skipped';
 
-/** Extracted contact. null = absent or unreadable on the card. */
+export type Legibility = 'clear' | 'partial' | 'unreadable' | 'absent';
+
+/** What the extractor saw for one field, kept for review. */
+export interface FieldEvidence {
+  legibility: Legibility;
+  source_text: string | null;
+  note: string | null;
+}
+
+export type ContactFieldName = 'first_name' | 'last_name' | 'email' | 'phone' | 'job_title';
+
+/** Extracted contact. null = absent or unreadable on the card (see `evidence` for why). */
 export interface ContactFields {
   extractor: string;
+  status: 'succeeded' | 'failed';
+  model: string | null;
+  error_code: string | null;
+  error: string | null;
+  evidence: Partial<Record<ContactFieldName, FieldEvidence>>;
   first_name: string | null;
   last_name: string | null;
   email: string | null;
@@ -88,9 +104,41 @@ export interface UploadResponse {
 export const getUpload = (id: string, signal?: AbortSignal) =>
   apiFetch<UploadResponse>(`/uploads/${encodeURIComponent(id)}`, { signal });
 
-/** POST /api/uploads. No Content-Type header: the browser adds the multipart boundary. */
-export function uploadPhoto(file: File, signal?: AbortSignal) {
+/** Header carrying the user's own OpenAI key (bring-your-own-key). */
+export const OPENAI_KEY_HEADER = 'X-OpenAI-Key';
+
+/** Error codes meaning "the user must (re-)enter their OpenAI key". */
+export const OPENAI_KEY_ERRORS = new Set(['openai_key_missing', 'openai_key_invalid']);
+
+/**
+ * POST /api/uploads. No Content-Type header: the browser adds the multipart boundary.
+ * `openaiKey` is the user's key; omit it only when the server has a dev fallback key.
+ */
+export function uploadPhoto(file: File, signal?: AbortSignal, openaiKey?: string | null) {
   const body = new FormData();
   body.append('file', file);
-  return apiFetch<UploadResponse>('/uploads', { method: 'POST', body, signal });
+  const headers: Record<string, string> = openaiKey ? { [OPENAI_KEY_HEADER]: openaiKey } : {};
+  return apiFetch<UploadResponse>('/uploads', { method: 'POST', body, signal, headers });
 }
+
+export interface OpenAIStatus {
+  /** True when the server has a dev-only key it will use if the browser sends none. */
+  server_key_available: boolean;
+  model: string;
+}
+
+export const getOpenAIStatus = (signal?: AbortSignal) =>
+  apiFetch<OpenAIStatus>('/openai/status', { signal });
+
+export interface VerifyResult {
+  valid: boolean;
+  message: string | null;
+}
+
+/** POST /api/openai/verify — checks the key can authenticate and use the configured model. */
+export const verifyOpenAIKey = (key: string, signal?: AbortSignal) =>
+  apiFetch<VerifyResult>('/openai/verify', {
+    method: 'POST',
+    headers: { [OPENAI_KEY_HEADER]: key },
+    signal,
+  });

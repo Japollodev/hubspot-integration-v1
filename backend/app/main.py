@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 
+import openai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -62,9 +63,12 @@ def _lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncContextMan
         )
         app.state.sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.hubspot_http = create_hubspot_http(settings)
+        # One shared connection pool for OpenAI; each request brings its own key (BYOK).
+        app.state.openai_http = openai.DefaultAsyncHttpxClient(timeout=settings.openai_timeout_s)
         try:
             yield
         finally:
+            await app.state.openai_http.aclose()
             await app.state.hubspot_http.aclose()
             await engine.dispose()
 
